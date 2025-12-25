@@ -1,4 +1,1 @@
-streamlit
-pandas
-supabase
-google-genai
+requests

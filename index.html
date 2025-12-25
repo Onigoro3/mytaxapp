@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>My Tax Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#121212',
+                        darkcard: '#1E1E1E',
+                        primary: '#3b82f6',
+                        accent: '#60a5fa'
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100; justify-content: center; align-items: center; flex-direction: column; color: white; }
+        .month-scroller::-webkit-scrollbar { display: none; }
+        .month-scroller { -ms-overflow-style: none; scrollbar-width: none; }
+        .month-btn.active { background-color: #3b82f6; color: white; font-weight: bold; border: 1px solid #3b82f6; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; font-weight: bold; background: rgba(59, 130, 246, 0.1); }
+        .modal { transition: opacity 0.25s ease; }
+        #camera-view { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 200; flex-direction: column; }
+        #camera-video { width: 100%; height: 100%; object-fit: cover; }
+        .shutter-btn { width: 70px; height: 70px; border-radius: 50%; background: white; border: 4px solid rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; transition: transform 0.1s; }
+        .shutter-btn:active { transform: scale(0.9); background: #eee; }
+        .badge { position: absolute; top: -5px; right: -5px; background: red; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 10px; display: flex; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body class="bg-darkbg text-gray-200 min-h-screen pb-24 relative overflow-x-hidden">
+    <div id="loading" class="loading-overlay"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div><p class="font-bold" id="loading-text">処理中...</p></div>
+
+    <div id="camera-view">
+        <video id="camera-video" autoplay playsinline muted></video>
+        <div class="absolute top-4 left-4 z-10"><button onclick="stopCamera()" class="bg-black/50 text-white px-4 py-2 rounded-full text-sm backdrop-blur-sm"><i class="fa-solid fa-xmark mr-2"></i>閉じる</button></div>
+        <div class="absolute bottom-8 left-0 w-full flex justify-around items-center px-6">
+            <button onclick="document.getElementById('file-input').click()" class="text-white flex flex-col items-center opacity-80"><i class="fa-solid fa-images text-2xl"></i><span class="text-xs mt-1">アルバム</span></button>
+            <button onclick="takePicture()" class="shutter-btn"></button>
+            <button onclick="finishCamera()" class="text-white flex flex-col items-center relative"><div class="bg-primary w-12 h-12 rounded-full flex items-center justify-center mb-1"><i class="fa-solid fa-check text-xl"></i></div><div id="photo-count-badge" class="badge hidden">0</div><span class="text-xs">完了</span></button>
+        </div>
+        <div id="flash" class="absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-100"></div>
+    </div>
+
+    <div id="sidebar-overlay" onclick="toggleSidebar()" class="fixed inset-0 bg-black bg-opacity-50 z-40 hidden transition-opacity"></div>
+    <aside id="sidebar" class="fixed top-0 left-0 w-72 h-full bg-darkcard z-50 transform -translate-x-full transition-transform duration-300 shadow-2xl flex flex-col border-r border-gray-800">
+        <div class="p-6 border-b border-gray-800 flex justify-between items-center bg-gray-900"><h2 class="text-xl font-bold text-white"><i class="fa-solid fa-wallet mr-2 text-primary"></i>メニュー</h2><button onclick="toggleSidebar()" class="text-gray-400"><i class="fa-solid fa-xmark"></i></button></div>
+        <nav class="flex-1 overflow-y-auto py-4">
+            <div class="px-6 mt-2 mb-2 text-xs text-gray-500 font-bold uppercase">メイン</div>
+            <a href="#" onclick="switchView('home')" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-house w-5 text-blue-400"></i> ホーム</a>
+            <a href="#" onclick="switchView('list')" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-book-open w-5 text-blue-400"></i> 会計帳簿 (一覧)</a>
+            <a href="#" onclick="switchView('tax')" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-file-invoice-dollar w-5 text-yellow-400"></i> 確定申告データ</a>
+            <div class="px-6 mt-6 mb-2 text-xs text-gray-500 font-bold uppercase">操作</div>
+            <a href="#" onclick="openModal('manual'); toggleSidebar();" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-pen-nib w-5 text-green-400"></i> 取引入力</a>
+            <a href="#" onclick="startCamera(); toggleSidebar();" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-camera w-5 text-purple-400"></i> レシート撮影</a>
+            <a href="#" onclick="document.getElementById('csv-import').click(); toggleSidebar();" class="block px-6 py-3 hover:bg-gray-800 flex items-center gap-3 text-gray-300"><i class="fa-solid fa-file-import w-5 text-orange-400"></i> freeeデータ取込</a>
+        </nav>
+    </aside>
+
+    <header class="fixed top-0 left-0 right-0 bg-darkcard p-4 flex justify-between items-center z-30 shadow-md border-b border-gray-800">
+        <button onclick="toggleSidebar()" class="text-gray-400 p-1 hover:text-white"><i class="fa-solid fa-bars text-xl"></i></button>
+        <h1 class="text-lg font-semibold" id="page-title">ホーム</h1>
+        <div class="flex gap-4 text-gray-400"><button onclick="syncData()" class="text-xs text-white bg-primary px-3 py-1.5 rounded-lg font-bold shadow active:scale-95 transition"><i class="fa-solid fa-rotate mr-1"></i>同期</button></div>
+    </header>
+
+    <main id="view-home" class="pt-20 px-4 space-y-6 max-w-md mx-auto transition-opacity duration-300">
+        <div id="initial-load-msg" class="text-center py-10"><p class="text-gray-400 mb-4">データが読み込まれていません</p><button onclick="syncData()" class="bg-primary text-white px-6 py-3 rounded-full font-bold shadow-lg animate-pulse">データを読み込む</button></div>
+        <div id="dashboard-content" class="hidden space-y-6">
+            <div class="bg-darkcard p-4 rounded-xl flex items-center gap-3 border border-gray-800"><div class="bg-gray-800 p-2 rounded"><i class="fa-regular fa-building text-gray-300"></i></div><div><p class="text-xs text-gray-400">ログイン中の事業所</p><p class="font-semibold">鬼カード</p></div></div>
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="openModal('manual')" class="bg-darkcard p-4 rounded-xl text-left flex flex-col gap-2 active:bg-gray-800 transition border border-gray-800 hover:border-primary group"><i class="fa-solid fa-plus text-primary text-xl group-hover:scale-110 transition"></i><span class="font-semibold">取引登録</span></button>
+                <button onclick="startCamera()" class="bg-darkcard p-4 rounded-xl text-left flex flex-col gap-2 active:bg-gray-800 transition border border-gray-800 hover:border-purple-500 group"><i class="fa-solid fa-camera text-purple-500 text-xl group-hover:scale-110 transition"></i><span class="font-semibold">レシート撮影</span></button>
+            </div>
+            
+            <div>
+                <div class="flex justify-between items-end mb-2">
+                    <h2 class="font-semibold text-lg" id="chart-title">月次推移</h2>
+                    <div class="flex items-center gap-2 bg-gray-800 rounded-lg px-2 py-1">
+                        <button onclick="changeYear(-1)" class="text-gray-400 hover:text-white px-2"><i class="fa-solid fa-chevron-left"></i></button>
+                        <span id="current-year-display" class="text-sm font-bold text-white">2025年度</span>
+                        <button onclick="changeYear(1)" class="text-gray-400 hover:text-white px-2"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                </div>
+
+                <div class="bg-darkcard rounded-xl overflow-hidden pb-4 border border-gray-800">
+                    <div class="flex border-b border-gray-800 text-sm">
+                        <button onclick="switchGraphMode('monthly')" id="tab-monthly" class="flex-1 py-3 text-center text-gray-400 hover:text-white transition tab-active">月次 (日別)</button>
+                        <button onclick="switchGraphMode('yearly')" id="tab-yearly" class="flex-1 py-3 text-center text-gray-400 hover:text-white transition">年次 (月別)</button>
+                    </div>
+                    
+                    <div id="month-selector" class="month-scroller flex overflow-x-auto py-4 px-2 gap-2 border-b border-gray-800"></div>
+                    
+                    <div class="p-4">
+                        <div class="flex justify-between items-start mb-6">
+                            <div><p class="text-xs text-primary mb-1 font-bold" id="month-label">--月 売上総利益</p><p class="text-3xl font-bold" id="summary-balance">0円</p></div>
+                            <div class="text-right text-sm space-y-1"><p class="text-blue-400 text-xs">収入</p><p class="text-white font-bold" id="summary-income">0円</p><p class="text-red-400 text-xs mt-2">支出</p><p class="text-white font-bold" id="summary-expense">0円</p></div>
+                        </div>
+                        <div class="h-48 relative"><canvas id="chartCanvas"></canvas><div id="no-data-msg" class="hidden absolute inset-0 flex items-center justify-center text-gray-500 text-xs">データがありません</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <main id="view-list" class="hidden pt-20 px-4 max-w-md mx-auto min-h-screen">
+        <div class="mb-4 flex justify-between items-center"><h2 class="text-gray-200 font-bold">会計帳簿</h2><button onclick="switchView('home')" class="text-xs text-primary">ホームへ戻る</button></div>
+        <div id="transaction-list" class="space-y-3 pb-24"></div>
+        <div id="empty-state" class="hidden text-center text-gray-500 mt-20"><i class="fa-regular fa-folder-open text-4xl mb-2"></i><p>データがありません</p></div>
+    </main>
+
+    <main id="view-tax" class="hidden pt-20 px-4 max-w-md mx-auto min-h-screen">
+        <div class="mb-6 flex justify-between items-center"><h2 class="text-gray-200 font-bold">確定申告データ</h2><select id="tax-year-select" onchange="renderTax()" class="bg-gray-800 text-white text-sm border border-gray-600 rounded px-3 py-1"></select></div>
+        <div class="bg-darkcard p-6 rounded-xl border border-gray-800 mb-6 text-center">
+            <p class="text-sm text-gray-400 mb-2">申告対象年の推定所得</p><p class="text-4xl font-bold text-white mb-4" id="tax-profit">¥0</p>
+            <div class="grid grid-cols-2 gap-4 border-t border-gray-700 pt-4"><div><p class="text-xs text-blue-400">総売上</p><p class="font-bold text-lg" id="tax-income">¥0</p></div><div><p class="text-xs text-red-400">総経費</p><p class="font-bold text-lg" id="tax-expense">¥0</p></div></div>
+        </div>
+        <h3 class="text-sm text-gray-400 font-bold mb-3 uppercase">科目別集計 (決算書用)</h3>
+        <div class="bg-darkcard rounded-xl border border-gray-800 overflow-hidden mb-6"><table class="w-full text-sm"><tbody id="tax-category-list"></tbody></table></div>
+        
+        <div class="space-y-3 mb-8">
+            <button onclick="downloadCSV('all')" class="w-full bg-green-600 text-white py-4 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-green-500 transition"><i class="fa-solid fa-file-csv"></i> 全件ダウンロード (freee用)</button>
+            <button onclick="downloadCSV('app_only')" class="w-full bg-gray-700 border border-gray-600 text-white py-4 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 hover:bg-gray-600 transition"><i class="fa-solid fa-mobile-screen-button"></i> アプリ登録分のみ (freee用)</button>
+        </div>
+        <p class="text-center text-xs text-gray-500">※「アプリ登録分」は、このアプリで撮影・入力したデータのみを出力します</p>
+    </main>
+
+    <button id="fab" onclick="openModal('manual')" class="fixed bottom-6 right-4 bg-primary text-white w-14 h-14 rounded-full shadow-lg flex items-center justify-center text-2xl active:bg-blue-700 transition z-20"><i class="fa-solid fa-plus"></i></button>
+    <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+    <input type="file" id="csv-import" accept=".csv" class="hidden" onchange="importFreeeCSV(event)">
+
+    <div id="entry-modal" class="modal opacity-0 pointer-events-none fixed w-full h-full top-0 left-0 flex items-end sm:items-center justify-center z-50">
+        <div class="modal-overlay absolute w-full h-full bg-black opacity-50"></div>
+        <div class="modal-container bg-darkcard w-full max-w-md mx-auto rounded-t-xl sm:rounded-xl overflow-hidden shadow-2xl transform transition-transform translate-y-full sm:translate-y-0 z-50">
+            <div class="flex justify-between items-center p-4 border-b border-gray-800 bg-gray-900"><h3 class="font-semibold" id="modal-title">取引登録</h3><button onclick="closeModal()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button></div>
+            <div class="p-4 max-h-[80vh] overflow-y-auto bg-darkcard">
+                <div id="form-manual" class="hidden space-y-4">
+                    <input type="hidden" id="edit-id">
+                    <div><label class="text-xs text-gray-400">日付</label><input type="date" id="date" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white"></div>
+                    <div class="flex gap-4"><div class="flex-1"><label class="text-xs text-gray-400">区分</label><select id="type" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white"><option value="expense">支出</option><option value="income">収入</option></select></div><div class="flex-1"><label class="text-xs text-gray-400">金額</label><input type="number" id="amount" placeholder="0" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white"></div></div>
+                    <div><label class="text-xs text-gray-400">決済方法</label><select id="method" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white"><option value="コード決済">コード決済</option><option value="クレジットカード">クレジットカード</option><option value="現金" selected>現金</option></select></div>
+                    <div>
+                        <label class="text-xs text-gray-400">勘定科目 (カテゴリ)</label>
+                        <select id="category" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white">
+                            <option value="">選択してください</option>
+                            <optgroup label="経費"><option value="消耗品費">消耗品費</option><option value="旅費交通費">旅費交通費</option><option value="通信費">通信費</option><option value="交際費">交際費</option><option value="会議費">会議費</option><option value="プライベート">プライベート</option><option value="雑費">雑費</option></optgroup>
+                            <optgroup label="収入"><option value="売上高">売上高</option><option value="副業">副業</option><option value="雑収入">雑収入</option></optgroup>
+                        </select>
+                    </div>
+                    <div><label class="text-xs text-gray-400">メモ</label><input type="text" id="memo" placeholder="詳細など" class="w-full p-3 bg-darkbg border border-gray-700 rounded-lg text-white"></div>
+                    <button onclick="saveEntry()" id="save-btn" class="w-full bg-primary py-4 rounded-lg font-bold mt-4 active:bg-blue-700 text-white shadow-lg">保存して完了</button>
+                    <button onclick="deleteCurrentEntry()" id="delete-btn" class="hidden w-full bg-transparent border border-red-800 text-red-500 py-3 rounded-lg font-bold mt-2">削除</button>
+                </div>
+                <div id="form-receipt" class="hidden space-y-4 py-4">
+                    <div id="photo-queue" class="grid grid-cols-3 gap-2"></div>
+                    <p class="text-center text-xs text-gray-400">撮影したレシート</p>
+                    <button id="analyze-btn" onclick="analyzeAll()" class="w-full bg-purple-600 text-white px-6 py-4 rounded-lg font-bold active:bg-purple-700 shadow-lg border-b-4 border-purple-800"><i class="fa-solid fa-wand-magic-sparkles mr-2"></i>一括AI解析開始</button>
+                    <button onclick="startCamera()" class="w-full bg-gray-700 text-white px-4 py-3 rounded-lg font-bold mt-2"><i class="fa-solid fa-camera mr-2"></i>カメラに戻る</button>
+                </div>
+                <div id="form-bulk" class="hidden space-y-6"><p class="text-center text-sm text-gray-400">解析結果</p><div id="bulk-list" class="space-y-4"></div><button onclick="saveBulk()" class="w-full bg-primary py-4 rounded-lg font-bold mt-4 text-white shadow-lg sticky bottom-0">まとめて保存する</button></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let transactions = []; let pendingImages = []; let myChart = null; 
+        let currentYear = new Date().getFullYear(); let selectedMonth = new Date().getMonth() + 1; 
+        let stream = null;
+        let viewMode = 'monthly'; // 'monthly' or 'yearly'
+
+        window.onload = () => { initMonthScroller(); initTaxYearSelect(); };
+        
+        async function syncData() {
+            showLoading(true, '同期中...');
+            try {
+                const res = await fetch('/api/data', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'read' }) });
+                if (!res.ok) throw new Error(await res.text() || '通信エラー');
+                transactions = await res.json();
+                document.getElementById('initial-load-msg').classList.add('hidden');
+                document.getElementById('dashboard-content').classList.remove('hidden');
+                updateUI(); renderList(); initTaxYearSelect();
+            } catch (e) { console.error(e); alert('同期に失敗しました: ' + e.message); } finally { showLoading(false); }
+        }
+
+        // --- グラフ・UI操作 ---
+        function changeYear(offset) {
+            currentYear += offset;
+            updateUI();
+        }
+
+        function switchGraphMode(mode) {
+            viewMode = mode;
+            document.getElementById('tab-monthly').className = `flex-1 py-3 text-center transition ${mode==='monthly' ? 'tab-active' : 'text-gray-400 hover:text-white'}`;
+            document.getElementById('tab-yearly').className = `flex-1 py-3 text-center transition ${mode==='yearly' ? 'tab-active' : 'text-gray-400 hover:text-white'}`;
+            
+            const ms = document.getElementById('month-selector');
+            if (mode === 'monthly') ms.classList.remove('hidden');
+            else ms.classList.add('hidden');
+
+            document.getElementById('chart-title').textContent = mode === 'monthly' ? '月次推移 (日別)' : '年次推移 (月別)';
+            updateUI();
+        }
+
+        function updateUI(){ 
+            document.getElementById('current-year-display').textContent=`${currentYear}年度`;
+            
+            let displayData, income, expense, balance;
+            
+            if (viewMode === 'monthly') {
+                // 月次モード: 指定月の日別データ
+                document.getElementById('month-label').textContent=`${selectedMonth}月 売上総利益`;
+                const prefix = `${currentYear}-${String(selectedMonth).padStart(2,'0')}`;
+                displayData = transactions.filter(t => t.date.startsWith(prefix));
+            } else {
+                // 年次モード: 指定年の全データ
+                document.getElementById('month-label').textContent=`${currentYear}年 売上総利益`;
+                displayData = transactions.filter(t => t.date.startsWith(`${currentYear}-`));
+            }
+
+            const inc = displayData.filter(t => t.type==='income').reduce((s,t)=>s+t.amount,0);
+            const exp = displayData.filter(t => t.type==='expense').reduce((s,t)=>s+t.amount,0);
+            
+            document.getElementById('summary-income').textContent=`¥${inc.toLocaleString()}`;
+            document.getElementById('summary-expense').textContent=`¥${exp.toLocaleString()}`;
+            document.getElementById('summary-balance').textContent=`¥${(inc-exp).toLocaleString()}`;
+            
+            updateChart(displayData);
+        }
+
+        function updateChart(data){ 
+            const ctx = document.getElementById('chartCanvas').getContext('2d');
+            let labels, values;
+
+            if (viewMode === 'monthly') {
+                // 日別集計 (1日〜末日)
+                const days = new Date(currentYear, selectedMonth, 0).getDate();
+                labels = Array.from({length: days}, (_, i) => i + 1);
+                values = new Array(days).fill(0);
+                data.forEach(t => {
+                    const day = parseInt(t.date.split('-')[2]);
+                    values[day - 1] += t.type === 'income' ? t.amount : -t.amount;
+                });
+            } else {
+                // 月別集計 (1月〜12月)
+                labels = Array.from({length: 12}, (_, i) => `${i + 1}月`);
+                values = new Array(12).fill(0);
+                data.forEach(t => {
+                    const m = parseInt(t.date.split('-')[1]);
+                    values[m - 1] += t.type === 'income' ? t.amount : -t.amount;
+                });
+            }
+
+            document.getElementById('no-data-msg').classList.toggle('hidden', values.some(x=>x!==0));
+            if(myChart) myChart.destroy();
+            
+            myChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: values,
+                        backgroundColor: values.map(v => v >= 0 ? '#3b82f6' : '#ef4444'),
+                        borderRadius: 2
+                    }]
+                },
+                options: {
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    scales: {x:{display:true, ticks:{color:'#666', font:{size:10}}}, y:{display:false}}, 
+                    plugins: {legend:{display:false}}
+                }
+            }); 
+        }
+
+        // --- データ操作 (保存・削除) ---
+        async function saveEntry() {
+            const id = document.getElementById('edit-id').value || String(Date.now());
+            const date = document.getElementById('date').value; const type = document.getElementById('type').value;
+            const amount = document.getElementById('amount').value; const category = document.getElementById('category').value; const memo = document.getElementById('memo').value; const method = document.getElementById('method').value;
+            if (!date || !amount) { alert('日付と金額は必須です'); return; }
+            const newData = { id: String(id), date, type, amount: parseInt(amount), category, memo, method };
+            showLoading(true, '保存中...');
+            try { 
+                const res = await fetch('/api/data', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'save', ...newData }) });
+                if(!res.ok) throw new Error('サーバーエラー');
+                const existingIdx = transactions.findIndex(t => t.id === newData.id);
+                if(existingIdx >= 0) transactions[existingIdx] = newData; else transactions.push(newData);
+                transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+                updateUI(); renderList(); closeModal(); alert('保存しました');
+            } catch(e) { console.error(e); alert('保存に失敗しました: ' + e.message); } finally { showLoading(false); }
+        }
+        async function deleteCurrentEntry() {
+            const id = document.getElementById('edit-id').value; 
+            if(!confirm('本当に削除しますか？')) return;
+            showLoading(true, '削除中...');
+            try { 
+                const res = await fetch('/api/data', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'delete', id: id }) });
+                if(!res.ok) throw new Error('サーバーエラー');
+                transactions = transactions.filter(t => t.id !== id);
+                updateUI(); renderList(); closeModal(); alert('削除しました');
+            } catch(e) { console.error(e); alert('削除に失敗しました: ' + e.message); } finally { showLoading(false); }
+        }
+        
+        // --- freee CSVインポート ---
+        function parseCSVLine(line) {
+            const res = []; let current = ''; let inQuote = false;
+            for(let i=0; i<line.length; i++) {
+                const c = line[i];
+                if(inQuote) { if(c === '"') { if(i+1 < line.length && line[i+1] === '"') { current += '"'; i++; } else { inQuote = false; } } else { current += c; } } 
+                else { if(c === '"') { inQuote = true; } else if(c === ',') { res.push(current); current = ''; } else { current += c; } }
+            }
+            res.push(current); return res;
+        }
+
+        function importFreeeCSV(event) {
+            const file = event.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.readAsArrayBuffer(file);
+            reader.onload = async function(e) {
+                const buffer = e.target.result;
+                let text = '';
+                try { const decoder = new TextDecoder('utf-8', { fatal: true }); text = decoder.decode(buffer); } 
+                catch (e) { try { const decoder = new TextDecoder('sjis'); text = decoder.decode(buffer); } catch (e2) { alert('文字コードエラー'); return; } }
+                text = text.replace(/^\uFEFF/, '');
+                
+                const rows = text.split(/\r?\n/);
+                if(rows.length === 0) return;
+                const headers = parseCSVLine(rows[0]).map(h => h.trim());
+                
+                const findIdx = (names) => { for(const n of names) { const i = headers.indexOf(n); if(i !== -1) return i; } return -1; };
+                const idxType = findIdx(['収支区分', 'type']); const idxDate = findIdx(['発生日', 'date']); const idxAmount = findIdx(['金額', 'amount']);
+                const idxCategory = findIdx(['勘定科目', 'category']); const idxMemo = findIdx(['備考', 'memo']); const idxMethod = findIdx(['決済口座', '支払口座', 'method']); 
+
+                if(idxType === -1 || idxDate === -1 || idxAmount === -1) { alert('形式エラー: 必須項目(収支区分, 発生日, 金額)が見つかりません'); return; }
+
+                let count = 0;
+                let lastDate = '';
+                showLoading(true, 'インポート中...');
+                
+                for(let i=1; i<rows.length; i++) {
+                    const rowStr = rows[i].trim();
+                    if(!rowStr) continue;
+                    const cols = parseCSVLine(rowStr);
+                    if(cols.length < headers.length) continue;
+
+                    const typeRaw = cols[idxType];
+                    const dateRaw = cols[idxDate];
+                    const amountRaw = cols[idxAmount];
+                    if(!typeRaw || !dateRaw || !amountRaw) continue;
+
+                    const type = typeRaw === '収入' || typeRaw === 'income' ? 'income' : 'expense';
+                    const date = dateRaw.replace(/\//g, '-');
+                    const amount = parseInt(amountRaw.replace(/,/g, '')); 
+                    const category = idxCategory !== -1 ? cols[idxCategory] : '不明';
+                    const memo = idxMemo !== -1 ? cols[idxMemo] : '';
+                    let method = idxMethod !== -1 ? cols[idxMethod] : '現金';
+                    if(method.match(/\d{4}\/\d{1,2}\/\d{1,2}/)) method = '現金';
+
+                    const id = `freee_${Date.now()}_${i}`; 
+                    lastDate = date;
+
+                    const newData = { id, date, type, amount, category, memo, method };
+                    try {
+                        await fetch('/api/data', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'save', ...newData }) });
+                        transactions.push(newData);
+                        count++;
+                        document.getElementById('loading-text').textContent = `${count}件 インポート中...`;
+                    } catch(e) { console.error('Import error', e); }
+                }
+                
+                showLoading(false);
+                alert(`${count}件の取り込みが完了しました！`);
+                
+                // データの年へ移動
+                if(lastDate) {
+                    currentYear = parseInt(lastDate.split('-')[0]);
+                    selectedMonth = parseInt(lastDate.split('-')[1]);
+                }
+                
+                transactions.sort((a,b) => new Date(b.date) - new Date(a.date));
+                updateUI(); renderList(); initTaxYearSelect();
+            };
+            event.target.value = '';
+        }
+
+        // --- その他UI/カメラなど ---
+        function initMonthScroller(){ const c=document.querySelector('.month-scroller'); c.innerHTML=''; for(let i=1;i<=12;i++){ const b=document.createElement('button'); b.className=`month-btn px-4 py-1.5 rounded-full text-sm whitespace-nowrap transition bg-gray-800 text-gray-400 hover:bg-gray-700 border border-gray-700`; b.textContent=`${i}月`; b.onclick=()=>selectMonth(i); if(i===selectedMonth)b.classList.add('active'); c.appendChild(b); } setTimeout(()=>c.children[selectedMonth-1]?.scrollIntoView({block:'nearest',inline:'center'}),100); }
+        function selectMonth(m){ selectedMonth=m; document.querySelectorAll('.month-btn').forEach((b,i)=>b.classList.toggle('active', i+1===m)); updateUI(); }
+        function renderList(){ const l=document.getElementById('transaction-list'); l.innerHTML=''; if(!transactions.length){ document.getElementById('empty-state').classList.remove('hidden'); return; } document.getElementById('empty-state').classList.add('hidden'); transactions.forEach(t=>{ l.innerHTML+=`<div onclick="editTransaction('${t.id}')" class="bg-darkcard p-4 rounded-lg flex justify-between items-center mb-2 border border-gray-800 cursor-pointer hover:bg-gray-800 transition"><div><p class="text-xs text-gray-500">${t.date}</p><p class="font-bold">${t.category} <span class="text-xs font-normal text-gray-500 ml-2">${t.memo}</span></p></div><div class="text-right"><p class="font-bold ${t.type==='income'?'text-blue-400':''}">${t.type==='income'?'+':''}¥${t.amount.toLocaleString()}</p><p class="text-xs text-gray-500 mt-1">${t.method||'現金'}</p></div></div>`; }); }
+        function editTransaction(id){ const t=transactions.find(i=>i.id===id); if(!t)return; openModal('manual'); document.getElementById('modal-title').textContent='取引編集'; document.getElementById('edit-id').value=t.id; document.getElementById('date').value=t.date; document.getElementById('type').value=t.type; document.getElementById('amount').value=t.amount; document.getElementById('category').value=t.category; document.getElementById('method').value=t.method||'現金'; document.getElementById('memo').value=t.memo; document.getElementById('delete-btn').classList.remove('hidden'); }
+        function initTaxYearSelect() { const select = document.getElementById('tax-year-select'); const years = [...new Set(transactions.map(t => t.date.split('-')[0]))].sort((a,b)=>b-a); if (years.length === 0) years.push(new Date().getFullYear()); select.innerHTML = years.map(y => `<option value="${y}">${y}年分</option>`).join(''); if(!select.value) select.innerHTML = `<option value="${new Date().getFullYear()}">${new Date().getFullYear()}年分</option>`; renderTax(); }
+        function renderTax() { const year = document.getElementById('tax-year-select').value; const data = transactions.filter(t => t.date.startsWith(year)); let incomeTotal = 0; let expenseTotal = 0; const categorySum = {}; data.forEach(t => { if (t.type === 'income') incomeTotal += t.amount; else expenseTotal += t.amount; if (!categorySum[t.category]) categorySum[t.category] = 0; categorySum[t.category] += t.amount; }); document.getElementById('tax-income').textContent = `¥${incomeTotal.toLocaleString()}`; document.getElementById('tax-expense').textContent = `¥${expenseTotal.toLocaleString()}`; document.getElementById('tax-profit').textContent = `¥${(incomeTotal - expenseTotal).toLocaleString()}`; if (incomeTotal - expenseTotal < 0) document.getElementById('tax-profit').classList.add('text-red-400'); else document.getElementById('tax-profit').classList.remove('text-red-400'); const list = document.getElementById('tax-category-list'); list.innerHTML = ''; Object.keys(categorySum).filter(c => data.find(t => t.category === c && t.type === 'income')).forEach(c => { list.innerHTML += `<tr class="border-b border-gray-800"><td class="py-3 pl-4 text-blue-400">${c}</td><td class="py-3 pr-4 text-right font-bold">¥${categorySum[c].toLocaleString()}</td></tr>`; }); Object.keys(categorySum).filter(c => data.find(t => t.category === c && t.type === 'expense')).forEach(c => { list.innerHTML += `<tr class="border-b border-gray-800"><td class="py-3 pl-4 text-gray-300">${c}</td><td class="py-3 pr-4 text-right font-bold">¥${categorySum[c].toLocaleString()}</td></tr>`; }); }
+        function downloadCSV(mode) { if (transactions.length === 0) return alert('データがありません'); let targetData = transactions; if (mode === 'app_only') { targetData = transactions.filter(t => !String(t.id).startsWith('freee_')); if (targetData.length === 0) return alert('アプリで登録されたデータが見つかりません'); } const header = ["収支区分", "管理番号", "発生日", "支払期日", "取引先", "勘定科目", "税区分", "金額", "税計算区分", "税額", "備考", "品目", "部門", "メモタグ（複数指定可、カンマ区切り）", "支払日", "支払口座", "支払金額"]; const bom = new Uint8Array([0xEF, 0xBB, 0xBF]); let csvContent = header.map(h => `"${h}"`).join(",") + "\r\n"; targetData.forEach(t => { const type = t.type === 'income' ? '収入' : '支出'; const date = t.date.replace(/-/g, '/'); let category = t.category; if (category === 'プライベート' && t.type === 'expense') category = '事業主貸'; let taxClass = '', taxCalcType = '内税', taxAmount = 0; if (category === '事業主貸' || category === '事業主借') { taxClass = '対象外'; taxAmount = 0; } else if (type === '収入') { taxClass = '課税売上10%'; taxAmount = Math.floor(t.amount * 10 / 110); } else { taxClass = '課対仕入10%'; taxAmount = Math.floor(t.amount * 10 / 110); } const row = [type, "", date, "", "", category, taxClass, t.amount, taxCalcType, taxAmount, t.memo||'', "", "", "", date, t.method||'現金', t.amount]; csvContent += row.map(v => `"${v}"`).join(",") + "\r\n"; }); const blob = new Blob([bom, csvContent], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.setAttribute("href", url); link.setAttribute("download", `freee_import_${mode}_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link); }
+        function toggleSidebar(){ const s=document.getElementById('sidebar'),o=document.getElementById('sidebar-overlay'); if(s.classList.contains('-translate-x-full')){ s.classList.remove('-translate-x-full'); o.classList.remove('hidden'); } else{ s.classList.add('-translate-x-full'); o.classList.add('hidden'); } }
+        function switchView(v){ const s = document.getElementById('sidebar'); if(!s.classList.contains('-translate-x-full')) toggleSidebar(); ['view-home','view-list','view-tax'].forEach(id=>document.getElementById(id).classList.add('hidden')); document.getElementById('fab').classList.add('hidden'); if(v==='home'){ document.getElementById('view-home').classList.remove('hidden'); document.getElementById('fab').classList.remove('hidden'); document.getElementById('page-title').textContent='ホーム'; updateUI(); } else if (v==='list'){ document.getElementById('view-list').classList.remove('hidden'); document.getElementById('page-title').textContent='会計帳簿'; renderList(); } else if (v==='tax'){ document.getElementById('view-tax').classList.remove('hidden'); document.getElementById('page-title').textContent='確定申告'; renderTax(); } }
+        async function startCamera() { closeModal(); const video = document.getElementById('camera-video'); document.getElementById('camera-view').style.display = 'flex'; try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }); video.srcObject = stream; } catch (e) { alert('カメラ起動エラー: '+e.message); stopCamera(); } updateBadge(); }
+        function stopCamera() { if (stream) { stream.getTracks().forEach(track => track.stop()); stream = null; } document.getElementById('camera-view').style.display = 'none'; }
+        function takePicture() { const video = document.getElementById('camera-video'); const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; const ctx = canvas.getContext('2d'); ctx.drawImage(video, 0, 0); const flash = document.getElementById('flash'); flash.style.opacity = '0.8'; setTimeout(() => flash.style.opacity = '0', 100); const MAX=800; let w=canvas.width,h=canvas.height; if(w>MAX){h*=MAX/w;w=MAX;} const tC=document.createElement('canvas'); tC.width=w; tC.height=h; tC.getContext('2d').drawImage(canvas,0,0,w,h); pendingImages.push(tC.toDataURL('image/jpeg',0.7).split(',')[1]); updateBadge(); }
+        function updateBadge() { const b=document.getElementById('photo-count-badge'); if(pendingImages.length>0){ b.classList.remove('hidden'); b.textContent=pendingImages.length; }else{ b.classList.add('hidden'); } }
+        function finishCamera() { stopCamera(); if(pendingImages.length>0) openModal('receipt'); }
+        function handleFileSelect(e) { const f=e.target.files[0]; if(!f)return; showLoading(true); const r=new FileReader(); r.onload=(ev)=>{ const i=new Image(); i.onload=()=>{ const c=document.createElement('canvas'); const ctx=c.getContext('2d'); const M=800; let w=i.width,h=i.height; if(w>M){h*=M/w;w=M;} c.width=w;c.height=h; ctx.drawImage(i,0,0,w,h); pendingImages.push(c.toDataURL('image/jpeg',0.7).split(',')[1]); updateBadge(); showLoading(false); if(document.getElementById('camera-view').style.display==='none') openModal('receipt'); }; i.src=ev.target.result; }; r.readAsDataURL(f); }
+        async function analyzeAll() { if(!pendingImages.length) return; showLoading(true, '解析中...'); const results = []; try { for(let i=0; i<pendingImages.length; i++) { const res = await fetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({image: pendingImages[i]}) }); if(res.ok) { const d = await res.json(); const t = d.candidates[0].content.parts[0].text.replace(/```json/g,'').replace(/```/g,'').trim(); results.push(JSON.parse(t)); } else { results.push({date: new Date().toISOString().split('T')[0], amount: 0, category: '不明', memo: '解析失敗'}); } } renderBulkForm(results); document.getElementById('form-receipt').classList.add('hidden'); document.getElementById('form-bulk').classList.remove('hidden'); document.getElementById('modal-title').textContent = '一括登録'; } catch(e) { alert('解析エラー: '+e.message); } finally { showLoading(false); } }
+        function renderBulkForm(res) { const l = document.getElementById('bulk-list'); l.innerHTML = ''; res.forEach((r,i) => { l.innerHTML += `<div class="bulk-item bg-gray-800 p-4 rounded border border-gray-700"><div class="flex justify-between mb-2"><span class="text-xs text-primary font-bold">No.${i+1}</span><button onclick="this.parentElement.parentElement.remove()" class="text-xs text-red-400">削除</button></div><div class="flex gap-2 mb-2"><input type="date" class="b-date w-1/3 bg-darkbg border border-gray-600 rounded p-2 text-xs" value="${r.date}"><input type="number" class="b-amount w-1/3 bg-darkbg border border-gray-600 rounded p-2 text-sm font-bold" value="${r.amount}" placeholder="円"><select class="b-category w-1/3 bg-darkbg border border-gray-600 rounded p-2 text-xs"><option value="${r.category}" selected>${r.category}</option><optgroup label="経費"><option value="消耗品費">消耗品費</option><option value="旅費交通費">旅費交通費</option><option value="通信費">通信費</option><option value="交際費">交際費</option><option value="会議費">会議費</option><option value="プライベート">プライベート</option><option value="雑費">雑費</option></optgroup></select></div><div class="mb-2"><select class="b-method w-full bg-darkbg border border-gray-600 rounded p-2 text-xs"><option value="現金">現金</option><option value="クレジットカード">クレジットカード</option><option value="コード決済">コード決済</option></select></div><input type="text" class="b-memo w-full bg-darkbg border border-gray-600 rounded p-2 text-xs" value="${r.memo}" placeholder="メモ"></div>`; }); }
+        async function saveBulk() { const items = document.querySelectorAll('.bulk-item'); showLoading(true, '保存中...'); for(const item of items) { const date = item.querySelector('.b-date').value; const amount = item.querySelector('.b-amount').value; const category = item.querySelector('.b-category').value; const method = item.querySelector('.b-method').value; const memo = item.querySelector('.b-memo').value; if(date && amount) { const newData = { id: String(Date.now() + i), date, type: 'expense', amount: parseInt(amount), category, memo, method }; transactions.push(newData); await fetch('/api/data', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ action: 'save', ...newData }) }).catch(console.error); } } transactions.sort((a,b) => new Date(b.date) - new Date(a.date)); updateUI(); renderList(); closeModal(); showLoading(false); alert('保存しました'); }
+        function openModal(t) { document.getElementById('modal-title').textContent = t==='manual'?'取引登録':'レシート解析'; ['form-manual','form-receipt','form-bulk'].forEach(id=>document.getElementById(id).classList.add('hidden')); if(t==='receipt') { updatePhotoQueue(); document.getElementById('form-receipt').classList.remove('hidden'); } else { document.getElementById('form-manual').classList.remove('hidden'); resetForm(); } const m=document.getElementById('entry-modal'); m.classList.remove('opacity-0','pointer-events-none'); m.querySelector('.modal-container').classList.remove('translate-y-full'); }
+        function closeModal() { const m=document.getElementById('entry-modal'); m.classList.add('opacity-0','pointer-events-none'); m.querySelector('.modal-container').classList.add('translate-y-full'); }
+        document.querySelector('.modal-overlay').addEventListener('click', closeModal);
+        function resetForm() { document.getElementById('edit-id').value=''; document.getElementById('amount').value=''; document.getElementById('memo').value=''; document.getElementById('category').value=''; document.getElementById('method').value='現金'; document.getElementById('save-btn').textContent='保存'; document.getElementById('delete-btn').classList.add('hidden'); }
+        function updatePhotoQueue() { const q=document.getElementById('photo-queue'); q.innerHTML=''; pendingImages.forEach((img,i)=>{ q.innerHTML+=`<div class="relative aspect-square bg-gray-800 rounded overflow-hidden"><img src="data:image/jpeg;base64,${img}" class="w-full h-full object-cover"><div class="absolute top-0 right-0 bg-red-500 w-5 h-5 flex items-center justify-center text-xs text-white" onclick="pendingImages.splice(${i},1);updatePhotoQueue()">×</div></div>` }); document.getElementById('analyze-btn').classList.toggle('hidden', pendingImages.length===0); }
+        function showLoading(show,t=''){ document.getElementById('loading').style.display=show?'flex':'none'; if(t)document.getElementById('loading-text').textContent=t; }
+    </script>
+</body>
+</html>
